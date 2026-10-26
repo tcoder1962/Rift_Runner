@@ -127,6 +127,8 @@ button:not(:disabled):hover{filter:brightness(1.12)}
       <span><i class="dot" style="background:#ff4dff"></i><b>Seeker</b> rams your ship</span>
       <span><i class="dot" style="background:#a678ff"></i><b>Gunship</b> sector boss</span>
       <span><i class="dot" style="background:#4dff9a"></i><b>Repair cell</b> fly through it</span>
+      <span><i class="dot" style="background:#a8643e"></i><b>Iron rock</b> tougher, double points</span>
+      <span><i class="dot" style="background:#7ff6ff"></i><b>Crystal rock</b> bonus points</span>
     </div>
     <p class="best">Best score <strong id="bestScore">0</strong></p>
   </div>
@@ -228,9 +230,9 @@ const camera=new THREE.PerspectiveCamera(74,window.innerWidth/window.innerHeight
 const dolly=new THREE.Group(); scene.add(dolly); dolly.add(camera);
 const ship=dolly.position;
 
-scene.add(new THREE.HemisphereLight(0x8fa8ff,0x2a1a10,0.55));
-scene.add(new THREE.AmbientLight(0x404858,0.25));
-const sunL=new THREE.DirectionalLight(0xfff1dc,1.15); sunL.position.set(0.7,0.6,0.5); scene.add(sunL);
+scene.add(new THREE.HemisphereLight(0x8fa8ff,0x2a1a10,0.3));
+scene.add(new THREE.AmbientLight(0x404858,0.12));
+const sunL=new THREE.DirectionalLight(0xfff1dc,1.55); sunL.position.set(0.95,0.55,0.05); scene.add(sunL);
 const rimL=new THREE.DirectionalLight(0x6fa0ff,0.45); rimL.position.set(-0.6,-0.2,-1); scene.add(rimL);
 
 function makeGlowTex(stops){ const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d'); const gr=g.createRadialGradient(64,64,0,64,64,64); stops.forEach(s=>gr.addColorStop(s[0],s[1])); g.fillStyle=gr; g.fillRect(0,0,128,128); return new THREE.CanvasTexture(c); }
@@ -369,24 +371,137 @@ function flashAt(p,size,color,dur=0.4){ const f=flashes[flashCur]; flashCur=(fla
 function updateFlashes(dt){ for(const f of flashes){ if(!f.active) continue; f.t+=dt; const k=f.t/f.dur; if(k>=1){ f.active=false; f.m.visible=false; continue; } const s=f.size*(0.3+0.7*Math.sqrt(k)); f.m.scale.set(s,s,s); f.m.material.opacity=(1-k)*0.85; f.m.position.z+=S*dt; } }
 
 /* ================= asteroids ================= */
-const astGeos=[];
-for(let k=0;k<6;k++){
-  const g=new THREE.IcosahedronGeometry(1,1), p=g.attributes.position, v=V();
-  const o=[rand(0,10),rand(0,10),rand(0,10)], fr=[rand(1.5,3.2),rand(1.5,3.2),rand(1.5,3.2)];
-  const lumps=[]; for(let i=0;i<5;i++) lumps.push({d:randDir(V()),s:rand(-0.3,0.22)});
-  for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i).normalize();
-    let f=1+0.18*Math.sin(v.x*fr[0]+o[0])*Math.cos(v.y*fr[1]+o[1])*Math.sin(v.z*fr[2]+o[2]);
-    for(const l of lumps) f+=l.s*Math.pow(Math.max(0,v.dot(l.d)),3);
-    v.multiplyScalar(f); p.setXYZ(i,v.x,v.y,v.z); }
-  g.computeVertexNormals(); astGeos.push(g);
+/* --- 3D gradient noise + fBm --- */
+const PERM=new Uint8Array(512);
+(()=>{ const p=[]; for(let i=0;i<256;i++) p.push(i); for(let i=255;i>0;i--){ const j=(Math.random()*(i+1))|0; const t=p[i]; p[i]=p[j]; p[j]=t; } for(let i=0;i<512;i++) PERM[i]=p[i&255]; })();
+const GR=[1,1,0,-1,1,0,1,-1,0,-1,-1,0,1,0,1,-1,0,1,1,0,-1,-1,0,-1,0,1,1,0,-1,1,0,1,-1,0,-1,-1];
+const fadeN=t=>t*t*t*(t*(t*6-15)+10), lerpN=(a,b,t)=>a+t*(b-a);
+function gradN(h,x,y,z){ const k=(h%12)*3; return GR[k]*x+GR[k+1]*y+GR[k+2]*z; }
+function noise3(x,y,z){
+  const X=Math.floor(x), Y=Math.floor(y), Z=Math.floor(z); x-=X; y-=Y; z-=Z;
+  const xi=X&255, yi=Y&255, zi=Z&255, u=fadeN(x), v=fadeN(y), w=fadeN(z);
+  const A=PERM[xi]+yi, AA=PERM[A]+zi, AB=PERM[A+1]+zi, B=PERM[xi+1]+yi, BA=PERM[B]+zi, BB=PERM[B+1]+zi;
+  return lerpN(lerpN(lerpN(gradN(PERM[AA],x,y,z),gradN(PERM[BA],x-1,y,z),u),lerpN(gradN(PERM[AB],x,y-1,z),gradN(PERM[BB],x-1,y-1,z),u),v),
+               lerpN(lerpN(gradN(PERM[AA+1],x,y,z-1),gradN(PERM[BA+1],x-1,y,z-1),u),lerpN(gradN(PERM[AB+1],x,y-1,z-1),gradN(PERM[BB+1],x-1,y-1,z-1),u),v),w);
 }
-const astColors=[0x8a8580,0x7a6a5a,0x5e5850,0x8f7a68,0x6b6460,0x7d746a];
+function fbm(x,y,z,oct){ let s=0,a=0.5,f=1; for(let i=0;i<oct;i++){ s+=a*noise3(x*f,y*f,z*f); f*=2.03; a*=0.5; } return s; }
+const rnd=n=>(Math.random()*n)|0;
+
+/* --- asteroid compositions --- */
+const AST_TYPES={
+  rock:  {w:0.48,low:[0.09,0.08,0.07],high:[0.3,0.26,0.22],speck:[0.5,0.47,0.41],mat:{roughness:0.95,metalness:0.02}},
+  carbon:{w:0.24,low:[0.05,0.047,0.045],high:[0.2,0.18,0.16],speck:[0.38,0.33,0.26],mat:{roughness:0.92,metalness:0.04}},
+  iron:  {w:0.16,low:[0.1,0.05,0.03],high:[0.34,0.19,0.11],speck:[0.66,0.66,0.7],mat:{roughness:0.42,metalness:0.55}},
+  ice:   {w:0.12,low:[0.16,0.27,0.4],high:[0.7,0.78,0.88],speck:[0.96,0.98,1.0],mat:{roughness:0.45,metalness:0.05,emissive:0x0a1724}}
+};
+const AST_NAMES=Object.keys(AST_TYPES);
+function pickAstType(){ let r=Math.random(); for(const k of AST_NAMES){ r-=AST_TYPES[k].w; if(r<=0) return k; } return 'rock'; }
+const mix3=(o,a,b,t)=>{ o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t; };
+const _mixT=[0,0,0];
+function shadeVertex(type,v,s,seed,out){
+  const T=AST_TYPES[type];
+  const n1=fbm(v.x*3+seed,v.y*3,v.z*3-seed,3);
+  mix3(out,T.low,T.high,clamp(0.5+n1*1.8+s.h*1.6,0,1));
+  const shade=(1-s.crater*0.6)*(1+s.rim*0.45); out[0]*=shade; out[1]*=shade; out[2]*=shade;
+  if(type==='iron'){
+    const m=fbm(v.x*5-seed,v.y*5,v.z*5,3); if(m>0.06) mix3(out,out,T.speck,clamp((m-0.06)*6,0,0.85));
+  } else if(type==='ice'){
+    const crack=1-Math.abs(noise3(v.x*7+seed,v.y*7,v.z*7)); if(crack>0.92){ _mixT[0]=0.08;_mixT[1]=0.3;_mixT[2]=0.62; mix3(out,out,_mixT,clamp((crack-0.92)*12,0,0.9)); }
+    if(s.rim>0.3||s.h>0.12) mix3(out,out,T.speck,0.35);
+  } else {
+    const sp=noise3(v.x*9+seed,v.y*9,v.z*9); if(sp>0.28) mix3(out,out,T.speck,clamp((sp-0.28)*4,0,0.6)); else if(sp<-0.3){ const k=1-clamp((-sp-0.3)*3,0,0.5); out[0]*=k; out[1]*=k; out[2]*=k; }
+    if(type==='rock'){ const band=0.9+0.14*(Math.sin((v.y+n1*0.7)*14+seed)*0.5+0.5); out[0]*=band; out[1]*=band; out[2]*=band; }
+  }
+}
+function smoothNormals(g){
+  g.computeVertexNormals();
+  const p=g.attributes.position, n=g.attributes.normal, acc=new Map(), keys=new Array(p.count);
+  for(let i=0;i<p.count;i++){ const k=Math.round(p.getX(i)*1e4)+'|'+Math.round(p.getY(i)*1e4)+'|'+Math.round(p.getZ(i)*1e4); keys[i]=k;
+    let a=acc.get(k); if(!a){ a=[0,0,0]; acc.set(k,a); } a[0]+=n.getX(i); a[1]+=n.getY(i); a[2]+=n.getZ(i); }
+  for(let i=0;i<p.count;i++){ const a=acc.get(keys[i]), l=Math.hypot(a[0],a[1],a[2])||1; n.setXYZ(i,a[0]/l,a[1]/l,a[2]/l); }
+  n.needsUpdate=true;
+}
+function buildAsteroidGeo(type,detail){
+  const seed=rand(0,200), sx=rand(-90,90), sy=rand(-90,90), sz=rand(-90,90), lumpF=rand(0.6,1.1), lumpA=rand(0.22,0.36), ridgeA=rand(0.03,0.07);
+  const craters=[];
+  const nBig=detail>=7?5+rnd(5):(detail>=5?3+rnd(3):1+rnd(2)), nSmall=detail>=7?14+rnd(12):(detail>=5?6+rnd(5):1+rnd(3));
+  for(let k=0;k<nBig;k++) craters.push({d:randDir(V()),r:rand(0.22,0.48),depth:rand(0.11,0.2)});
+  for(let k=0;k<nSmall;k++) craters.push({d:randDir(V()),r:rand(0.06,0.16),depth:rand(0.04,0.08)});
+  const height=v=>{
+    let h=noise3(v.x*lumpF+sx,v.y*lumpF+sy,v.z*lumpF+sz)*lumpA;
+    h+=fbm(v.x*2.3+sy,v.y*2.3+sz,v.z*2.3+sx,4)*0.12;
+    const rd=1-Math.abs(noise3(v.x*4.5+sz,v.y*4.5+sx,v.z*4.5+sy)); h+=rd*rd*rd*ridgeA;
+    let crater=0, rim=0;
+    for(const c of craters){ const dot=v.dot(c.d); if(dot<0.5) continue; const t=Math.acos(Math.min(1,dot))/c.r; if(t>1.7) continue;
+      if(t<1){ h-=c.depth*(1-t*t*t*t)*0.9; crater=Math.max(crater,1-t*t); }
+      const g=Math.exp(-((t-1)*(t-1))/0.03); h+=c.depth*0.5*g; rim=Math.max(rim,g); }
+    return {h,crater,rim};
+  };
+  const g=new THREE.IcosahedronGeometry(1,detail), pos=g.attributes.position, col=new Float32Array(pos.count*3);
+  const cache=new Map(), v=V(), out=[0,0,0];
+  for(let i=0;i<pos.count;i++){
+    v.fromBufferAttribute(pos,i); const key=Math.round(v.x*1e5)+'|'+Math.round(v.y*1e5)+'|'+Math.round(v.z*1e5);
+    let rec=cache.get(key);
+    if(!rec){ v.normalize(); const s=height(v), r=1+s.h; shadeVertex(type,v,s,seed,out); rec=[v.x*r,v.y*r,v.z*r,out[0],out[1],out[2]]; cache.set(key,rec); }
+    pos.setXYZ(i,rec[0],rec[1],rec[2]); col[i*3]=rec[3]; col[i*3+1]=rec[4]; col[i*3+2]=rec[5];
+  }
+  g.setAttribute('color',new THREE.BufferAttribute(col,3));
+  smoothNormals(g); g.computeBoundingSphere();
+  g.userData.height=height;
+  return g;
+}
+/* geometry library: per composition, per size (small / medium / large), several unique shapes */
+const AST_DETAIL=[3,6,10], AST_VARIANTS=[4,3,3];
+const astGeos={}, astMats={};
+for(const t of AST_NAMES){
+  astGeos[t]=AST_DETAIL.map((d,si)=>{ const arr=[]; for(let k=0;k<AST_VARIANTS[si];k++) arr.push(buildAsteroidGeo(t,d)); return arr; });
+  const T=AST_TYPES[t];
+  astMats[t]=new THREE.MeshStandardMaterial(Object.assign({color:0xffffff,vertexColors:true},T.mat));
+}
+/* glowing crystal clusters that grow on some big rocks */
+const crystalGeo=new THREE.OctahedronGeometry(1,0);
+const crystalKinds=[
+  {mat:new THREE.MeshStandardMaterial({color:0x8ff8ff,emissive:0x1fb8d8,emissiveIntensity:1,roughness:0.15,metalness:0.1,flatShading:true}),pc:new THREE.Color(0x7ff6ff)},
+  {mat:new THREE.MeshStandardMaterial({color:0xff9cf4,emissive:0xb0289f,emissiveIntensity:1,roughness:0.15,metalness:0.1,flatShading:true}),pc:new THREE.Color(0xff7bf2)}
+];
+function addCrystals(m,geo){
+  const kind=pick(crystalKinds), n=3+rnd(4);
+  for(let k=0;k<n;k++){ const d=randDir(V()), h=geo.userData.height(d).h, cl=new THREE.Group();
+    cl.position.copy(d).multiplyScalar((1+h)*0.95); cl.quaternion.setFromUnitVectors(AX_Y,d);
+    for(let j=0,J=2+rnd(3);j<J;j++){ const c=new THREE.Mesh(crystalGeo,kind.mat), L=rand(0.16,0.4); c.scale.set(L*0.26,L,L*0.26); c.position.set(rand(-0.07,0.07),L*0.55,rand(-0.07,0.07)); c.rotation.set(rand(-0.45,0.45),rand(0,6),rand(-0.45,0.45)); cl.add(c); }
+    m.add(cl); }
+  return kind;
+}
+
+/* --- tumbling rock chunks thrown off when an asteroid breaks --- */
+const chunks=[]; for(let i=0;i<70;i++){ const m=new THREE.Mesh(astGeos.rock[0][0],astMats.rock); m.visible=false; scene.add(m); chunks.push({m,vel:V(),spin:V(),life:0,max:1,base:1,active:false}); }
+let chunkCur=0;
+function spawnChunks(p,type,count,r,spd){
+  for(let k=0;k<count;k++){ const c=chunks[chunkCur]; chunkCur=(chunkCur+1)%chunks.length;
+    c.m.geometry=pick(astGeos[type][0]); c.m.material=astMats[type];
+    randDir(tB); c.m.position.copy(p).addScaledVector(tB,r*0.5); c.vel.copy(tB).multiplyScalar(rand(spd*0.4,spd));
+    c.spin.set(rand(-6,6),rand(-6,6),rand(-6,6)); c.base=rand(0.12,0.32)*r; c.m.scale.setScalar(c.base);
+    c.life=c.max=rand(1.1,2.2); c.active=true; c.m.visible=true; }
+}
+function updateChunks(dt){ for(const c of chunks){ if(!c.active) continue; c.life-=dt; if(c.life<=0){ c.active=false; c.m.visible=false; continue; }
+  c.m.position.x+=c.vel.x*dt; c.m.position.y+=c.vel.y*dt; c.m.position.z+=(c.vel.z+S)*dt;
+  c.m.rotation.x+=c.spin.x*dt; c.m.rotation.y+=c.spin.y*dt; c.m.rotation.z+=c.spin.z*dt;
+  c.m.scale.setScalar(c.base*Math.min(1,c.life/0.4)); } }
+
+const AST_PART={rock:new THREE.Color(0x9a8a7a),carbon:new THREE.Color(0x5a524a),iron:new THREE.Color(0xc08a60),ice:new THREE.Color(0xcfe8ff)};
 const asteroids=[];
-function spawnAsteroid(size,pos,vel){
-  const r=size===3?rand(3.2,4.6):(size===2?rand(1.7,2.4):rand(0.75,1.1));
-  const m=new THREE.Mesh(pick(astGeos),new THREE.MeshLambertMaterial({color:pick(astColors)}));
-  m.scale.set(r*rand(0.85,1.15),r*rand(0.8,1.1),r*rand(0.85,1.15)); m.position.copy(pos); m.rotation.set(rand(0,6),rand(0,6),rand(0,6)); scene.add(m);
-  const a={mesh:m,size,r:r*0.92,vel:vel?vel.clone():V(rand(-1.5,1.5),rand(-1,1),rand(-2,2)),spin:V(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(size===1?1.8:0.6),hp:size===3?2:1,flash:0,dead:false};
+function spawnAsteroid(size,pos,vel,type){
+  type=type||pickAstType();
+  const giant=size===3&&Math.random()<0.1;
+  let r=size===3?rand(3.2,4.8):(size===2?rand(1.7,2.4):rand(0.75,1.1)); if(giant) r*=1.7;
+  const geo=pick(astGeos[type][size-1]), mat=astMats[type].clone();
+  const m=new THREE.Mesh(geo,mat);
+  const stretch=Math.random()<0.3?rand(1.2,1.5):1;
+  m.scale.set(r*rand(0.88,1.1)*stretch,r*rand(0.82,1.05),r*rand(0.88,1.1)); m.position.copy(pos); m.rotation.set(rand(0,6),rand(0,6),rand(0,6)); scene.add(m);
+  let crystal=null; if(size===3&&(type==='rock'||type==='carbon')&&Math.random()<0.25) crystal=addCrystals(m,geo);
+  const a={mesh:m,size,type,giant,crystal,r:r*0.92,vel:vel?vel.clone():V(rand(-1.5,1.5),rand(-1,1),rand(-2,2)),
+    spin:V(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(size===1?1.8:(giant?0.25:0.55)),
+    hp:(size===3?2:1)+(type==='iron'?1:0)+(giant?2:0),flash:0,baseEm:mat.emissive.clone(),dead:false};
   asteroids.push(a); return a;
 }
 function removeAsteroid(i){ const a=asteroids[i]; a.dead=true; scene.remove(a.mesh); a.mesh.material.dispose(); asteroids.splice(i,1); }
@@ -397,26 +512,31 @@ function spawnFieldAsteroid(z0,z1){
   spawnAsteroid(size,tA);
 }
 function destroyAsteroid(i,byPlayer,dir){
-  const a=asteroids[i], p=a.mesh.position.clone();
-  emit(p,C.rock,10+a.size*12,4+a.size*3,1.1); emit(p,C.spark,6+a.size*6,6+a.size*2,0.6);
-  if(a.size>=2) flashAt(p,a.r*1.4,0xffb070,0.3);
-  sfx.boom(a.size*0.45,panOf(p));
+  const a=asteroids[i], p=a.mesh.position.clone(), pc=AST_PART[a.type];
+  emit(p,pc,10+a.size*12,4+a.size*3,1.1); emit(p,a.type==='ice'?C.white:C.spark,6+a.size*6,6+a.size*2,0.6);
+  if(a.type==='ice') emit(p,AST_PART.ice,30+a.size*10,3+a.size*2,1.6);
+  if(a.crystal){ emit(p,a.crystal.pc,90,12,1.2); flashAt(p,a.r*2,a.crystal.pc.getHex(),0.45); }
+  spawnChunks(p,a.type,a.size*2+(a.giant?6:1),a.r,5+a.size*2);
+  if(a.size>=2) flashAt(p,a.r*1.4,a.type==='ice'?0xbfe4ff:0xffb070,0.3);
+  sfx.boom(a.size*0.45+(a.giant?0.8:0),panOf(p));
   if(byPlayer){
-    score+=[0,30,20,10][a.size];
-    if(a.size>1){ const n=a.size===3?3:2;
+    score+=[0,30,20,10][a.size]*(a.type==='iron'?2:1)+(a.crystal?50:0)+(a.giant?40:0);
+    if(a.size>1){ const n=a.giant?4:(a.size===3?3:2);
       for(let k=0;k<n;k++){ randDir(tB); const vel=tC.copy(tB).multiplyScalar(rand(3,6.5)).addScaledVector(a.vel,0.5); if(dir) vel.addScaledVector(dir,rand(2,4.5));
-        tA.copy(p).addScaledVector(tB,a.r*0.45); spawnAsteroid(a.size-1,tA,vel); } }
+        tA.copy(p).addScaledVector(tB,a.r*0.45); spawnAsteroid(a.size-1,tA,vel,a.type); } }
   }
   removeAsteroid(asteroids.indexOf(a));
 }
-function hitAsteroid(i,dir,at,dmg){ const a=asteroids[i]; a.hp-=(dmg||1); if(a.hp>0){ a.flash=1; emit(at,C.spark,8,7,0.4); sfx.ping(panOf(at)); } else destroyAsteroid(i,true,dir); }
+function hitAsteroid(i,dir,at,dmg){ const a=asteroids[i]; a.hp-=(dmg||1);
+  if(a.hp>0){ a.flash=1; emit(at,a.type==='ice'?AST_PART.ice:(a.type==='iron'?C.white:C.spark),a.type==='iron'?14:8,7,0.4); emit(at,AST_PART[a.type],6,4,0.6); sfx.ping(panOf(at)); }
+  else destroyAsteroid(i,true,dir); }
 function updateAsteroids(dt){
   for(let i=asteroids.length-1;i>=0;i--){ const a=asteroids[i], m=a.mesh;
     m.position.x+=a.vel.x*dt; m.position.y+=a.vel.y*dt; m.position.z+=(a.vel.z+S)*dt;
     m.rotation.x+=a.spin.x*dt; m.rotation.y+=a.spin.y*dt; m.rotation.z+=a.spin.z*dt;
-    if(a.flash>0){ a.flash=Math.max(0,a.flash-dt*5); m.material.emissive.setRGB(a.flash*0.9,a.flash*0.5,a.flash*0.2); }
+    if(a.flash>0){ a.flash=Math.max(0,a.flash-dt*5); m.material.emissive.setRGB(a.baseEm.r+a.flash*0.9,a.baseEm.g+a.flash*0.5,a.baseEm.b+a.flash*0.2); }
     if(m.position.z>14||Math.abs(m.position.x-ship.x)>120||Math.abs(m.position.y-ship.y)>90){ removeAsteroid(i); continue; }
-    if(state==='playing'){ const rr2=a.r+1.2; if(m.position.distanceToSquared(ship)<rr2*rr2){ if(invuln<=0) damage([0,10,18,30][a.size]); destroyAsteroid(i,false); } }
+    if(state==='playing'){ const rr2=a.r+1.2; if(m.position.distanceToSquared(ship)<rr2*rr2){ if(invuln<=0) damage([0,10,18,30][a.size]+(a.giant?15:0)); destroyAsteroid(i,false); } }
   }
 }
 
@@ -787,7 +907,7 @@ function resetGame(){
   while(enemies.length) removeEnemy(enemies.length-1);
   while(pickups.length) removePickup(pickups.length-1);
   bolts.forEach(killBolt); ebolts.forEach(b=>{ b.active=false; b.mesh.visible=false; });
-  missiles.forEach(m=>{ m.active=false; m.g.visible=false; }); beams.forEach(b=>{ b.active=false; b.m.visible=false; });
+  missiles.forEach(m=>{ m.active=false; m.g.visible=false; }); beams.forEach(b=>{ b.active=false; b.m.visible=false; }); chunks.forEach(c=>{ c.active=false; c.m.visible=false; });
   lockSprites.forEach(s=>s.visible=false);
   hull=100; score=0; kills=0; sector=1; sectorTime=0; bossSpawned=false; invuln=0; enemyTimer=4; goTimer=0; paused=false;
   missileAmmo=MAX_MISSILES; missileReload=0; deskLock=null; ctrls.forEach(c=>c.userData.lock=null);
@@ -948,7 +1068,7 @@ function update(dt){
     const j=i*6; dPos[j]=dx[i]; dPos[j+1]=dy[i]; dPos[j+2]=dz[i]; dPos[j+3]=dx[i]; dPos[j+4]=dy[i]; dPos[j+5]=dz[i]-len; }
   dGeo.attributes.position.needsUpdate=true; dMat.opacity=0.3+clamp((S-20)/45,0,1)*0.45;
 
-  updateAsteroids(dt); updateBolts(dt); updateBeams(dt); updateMissiles(dt); updateEBolts(dt); updateEnemies(dt); updatePickups(dt); updateParticles(dt); updateFlashes(dt);
+  updateAsteroids(dt); updateChunks(dt); updateBolts(dt); updateBeams(dt); updateMissiles(dt); updateEBolts(dt); updateEnemies(dt); updatePickups(dt); updateParticles(dt); updateFlashes(dt);
   updateLocks(dt);
 
   hudT-=dt; if(hudT<=0){ hudT=0.1; drawHUD(); }
